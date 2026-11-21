@@ -65,9 +65,11 @@ export default function CreateProposalPage() {
       notes,
       items: selectedItems.map((s) => ({
         product_id: s.product_id,
+        current_stock: s.current_stock,
         suggested_quantity: s.suggested_quantity,
         reason: s.reason,
         priority: s.priority,
+        daily_consumption: s.daily_consumption,
       })),
     })
   }
