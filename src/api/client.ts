@@ -2,8 +2,8 @@ import axios from 'axios';
 import { useAuthStore } from '../store/authStore';
 
 const client = axios.create({
-  baseURL: 'http://localhost:8000',
-  timeout: 10000,
+  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8000',
+  timeout: 30000,
 });
 
 client.interceptors.request.use((config) => {
