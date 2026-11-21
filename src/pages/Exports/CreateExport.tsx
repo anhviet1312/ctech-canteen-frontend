@@ -27,7 +27,6 @@ export default function CreateExportPage() {
   const [items, setItems] = useState<ExportItemRow[]>([
     { key: '1', product_id: null, quantity: 1, max_qty: 999999 },
   ])
-  const [qtyErrors, setQtyErrors] = useState<Record<string, boolean>>({})
 
   const { data: prodData } = useQuery({ queryKey: ['products'], queryFn: () => getProducts() })
   const products: Product[] = prodData?.data ?? []
@@ -41,7 +40,6 @@ export default function CreateExportPage() {
 
   const removeItem = (key: string) => {
     setItems((prev) => prev.filter((i) => i.key !== key))
-    setQtyErrors((prev) => { const copy = { ...prev }; delete copy[key]; return copy })
   }
 
   const updateItem = (key: string, updates: Partial<ExportItemRow>) => {
@@ -49,6 +47,39 @@ export default function CreateExportPage() {
       prev.map((i) => (i.key === key ? { ...i, ...updates } : i))
     )
   }
+
+  // Helper kiểm tra mặt hàng đã được chọn ở dòng khác chưa
+  const isSelectedInOtherRow = (productId: number, currentKey: string) => {
+    return items.some((item) => item.key !== currentKey && item.product_id === productId)
+  }
+
+  // Tính tổng số lượng xuất theo từng product_id
+  const totalQtyByProd = items.reduce<Record<number, number>>((acc, item) => {
+    if (item.product_id != null) {
+      acc[item.product_id] = (acc[item.product_id] || 0) + (Number(item.quantity) || 0)
+    }
+    return acc
+  }, {})
+
+  // Đếm số lần xuất hiện của từng product_id để phát hiện trùng lặp
+  const productCounts = items.reduce<Record<number, number>>((acc, item) => {
+    if (item.product_id != null) {
+      acc[item.product_id] = (acc[item.product_id] || 0) + 1
+    }
+    return acc
+  }, {})
+
+  const duplicateProductIds = Object.keys(productCounts)
+    .map(Number)
+    .filter((id) => productCounts[id] > 1)
+  const hasDuplicates = duplicateProductIds.length > 0
+
+  // Kiểm tra mặt hàng nào có tổng số lượng vượt tồn kho khả dụng
+  const exceededProducts = Object.entries(totalQtyByProd).filter(([prodId, totalQty]) => {
+    const p = products.find((pr) => pr.id === Number(prodId))
+    return p && totalQty > p.current_stock
+  })
+  const hasOverStockError = exceededProducts.length > 0
 
   const mutation = useMutation({
     mutationFn: createExport,
@@ -65,8 +96,6 @@ export default function CreateExportPage() {
     },
   })
 
-  const hasQtyError = Object.values(qtyErrors).some(Boolean)
-
   const handleSubmit = async () => {
     try {
       const vals = await form.validateFields()
@@ -75,8 +104,12 @@ export default function CreateExportPage() {
         message.warning('Vui lòng thêm ít nhất một mặt hàng!')
         return
       }
-      if (hasQtyError) {
-        message.warning('Số lượng xuất vượt quá tồn kho!')
+      if (hasDuplicates) {
+        message.error('Phát hiện mặt hàng bị chọn trùng lặp nhiều dòng. Vui lòng gộp số lượng vào 1 dòng!')
+        return
+      }
+      if (hasOverStockError) {
+        message.error('Tổng số lượng xuất của một số mặt hàng vượt quá tồn kho khả dụng!')
         return
       }
       mutation.mutate({
@@ -92,57 +125,76 @@ export default function CreateExportPage() {
     {
       title: 'Hàng hóa (tồn kho hiện tại)',
       key: 'product',
-      width: '45%',
-      render: (_: any, row: ExportItemRow) => (
-        <Select
-          showSearch
-          placeholder="Chọn hàng hóa"
-          style={{ width: '100%' }}
-          value={row.product_id ?? undefined}
-          onChange={(v) => {
-            const p = products.find((pr) => pr.id === v)
-            const maxQ = p?.current_stock ?? 999999
-            updateItem(row.key, {
-              product_id: v,
-              max_qty: maxQ,
-            })
-            setQtyErrors((prev) => ({ ...prev, [row.key]: row.quantity > maxQ }))
-          }}
-          filterOption={(input, option) =>
-            String(option?.children ?? '').toLowerCase().includes(input.toLowerCase())
-          }
-        >
-          {products.map((p) => (
-            <Option key={p.id} value={p.id}>
-              [{p.code}] {p.name} — Tồn: {p.current_stock} {p.unit}
-            </Option>
-          ))}
-        </Select>
-      ),
+      width: '50%',
+      render: (_: any, row: ExportItemRow) => {
+        const isDuplicated = row.product_id != null && duplicateProductIds.includes(row.product_id)
+        return (
+          <>
+            <Select
+              showSearch
+              placeholder="Chọn hàng hóa"
+              style={{ width: '100%' }}
+              status={isDuplicated ? 'error' : ''}
+              value={row.product_id ?? undefined}
+              onChange={(v) => {
+                const p = products.find((pr) => pr.id === v)
+                const maxQ = p?.current_stock ?? 999999
+                updateItem(row.key, {
+                  product_id: v,
+                  max_qty: maxQ,
+                })
+              }}
+              filterOption={(input, option) =>
+                String(option?.children ?? '').toLowerCase().includes(input.toLowerCase())
+              }
+            >
+              {products.map((p) => {
+                const isSelectedOther = isSelectedInOtherRow(p.id, row.key)
+                return (
+                  <Option key={p.id} value={p.id} disabled={isSelectedOther}>
+                    [{p.code}] {p.name} — Tồn: {p.current_stock} {p.unit} {isSelectedOther ? '(Đã chọn ở dòng khác)' : ''}
+                  </Option>
+                )
+              })}
+            </Select>
+            {isDuplicated && (
+              <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 4 }}>
+                ⚠️ Mặt hàng này đã được chọn ở dòng khác. Vui lòng xóa bớt hoặc gộp số lượng!
+              </div>
+            )}
+          </>
+        )
+      },
     },
     {
       title: 'Số lượng',
       key: 'quantity',
       width: '25%',
-      render: (_: any, row: ExportItemRow) => (
-        <>
-          <InputNumber
-            min={1}
-            max={row.max_qty}
-            value={row.quantity}
-            status={qtyErrors[row.key] ? 'error' : ''}
-            onChange={(v) => {
-              const qty = Number(v) || 1
-              updateItem(row.key, { quantity: qty })
-              setQtyErrors((prev) => ({ ...prev, [row.key]: qty > row.max_qty }))
-            }}
-            style={{ width: '100%' }}
-          />
-          {qtyErrors[row.key] && (
-            <div style={{ color: '#ff4d4f', fontSize: 12 }}>Vượt quá tồn kho ({row.max_qty})</div>
-          )}
-        </>
-      ),
+      render: (_: any, row: ExportItemRow) => {
+        const p = products.find((pr) => pr.id === row.product_id)
+        const totalReq = row.product_id != null ? (totalQtyByProd[row.product_id] || 0) : 0
+        const isExceeded = p ? totalReq > p.current_stock : false
+        return (
+          <>
+            <InputNumber
+              min={1}
+              max={p?.current_stock ?? 999999}
+              value={row.quantity}
+              status={isExceeded ? 'error' : ''}
+              onChange={(v) => {
+                const qty = Number(v) || 1
+                updateItem(row.key, { quantity: qty })
+              }}
+              style={{ width: '100%' }}
+            />
+            {isExceeded && p && (
+              <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 4 }}>
+                Tổng xuất ({totalReq} {p.unit}) vượt tồn kho ({p.current_stock} {p.unit})
+              </div>
+            )}
+          </>
+        )
+      },
     },
     {
       title: '',
@@ -195,9 +247,18 @@ export default function CreateExportPage() {
 
         <Divider>Danh sách hàng hóa xuất kho</Divider>
 
-        {hasQtyError && (
+        {hasDuplicates && (
           <Alert
-            message="Có mặt hàng có số lượng xuất vượt quá tồn kho!"
+            message="Phát hiện mặt hàng trùng lặp: Mỗi mặt hàng chỉ được xuất hiện ở một dòng trong phiếu xuất. Vui lòng gộp số lượng hoặc xóa dòng trùng!"
+            type="error"
+            showIcon
+            style={{ marginBottom: 12 }}
+          />
+        )}
+
+        {hasOverStockError && (
+          <Alert
+            message="Tổng số lượng xuất của một số mặt hàng vượt quá tồn kho khả dụng hiện tại!"
             type="error"
             showIcon
             style={{ marginBottom: 12 }}
@@ -227,6 +288,7 @@ export default function CreateExportPage() {
             type="primary"
             onClick={handleSubmit}
             loading={mutation.isPending}
+            disabled={hasDuplicates || hasOverStockError}
             size="large"
           >
             Tạo phiếu xuất

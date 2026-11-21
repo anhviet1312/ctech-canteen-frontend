@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import {
   Form, Input, Select, Button, Typography, Card, Table, InputNumber,
-  DatePicker, Space, Divider, message, Statistic,
+  DatePicker, Space, Divider, message, Statistic, Alert,
 } from 'antd'
 import { PlusOutlined, DeleteOutlined, ArrowLeftOutlined } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -62,6 +62,23 @@ export default function CreateImportPage() {
     )
   }
 
+  // Helper kiểm tra mặt hàng đã chọn ở dòng khác
+  const isSelectedInOtherRow = (productId: number, currentKey: string) => {
+    return items.some((item) => item.key !== currentKey && item.product_id === productId)
+  }
+
+  // Đếm số lần xuất hiện của từng product_id
+  const productCounts = items.reduce<Record<number, number>>((acc, item) => {
+    if (item.product_id != null) {
+      acc[item.product_id] = (acc[item.product_id] || 0) + 1
+    }
+    return acc
+  }, {})
+  const duplicateProductIds = Object.keys(productCounts)
+    .map(Number)
+    .filter((id) => productCounts[id] > 1)
+  const hasDuplicates = duplicateProductIds.length > 0
+
   const totalAmount = items.reduce((s, i) => s + (Number(i.quantity) || 0) * (Number(i.unit_price) || 0), 0)
 
   const mutation = useMutation({
@@ -87,6 +104,10 @@ export default function CreateImportPage() {
         message.warning('Vui lòng thêm ít nhất một mặt hàng!')
         return
       }
+      if (hasDuplicates) {
+        message.error('Phát hiện mặt hàng bị trùng lặp nhiều dòng. Vui lòng gộp số lượng vào 1 dòng!')
+        return
+      }
 
       mutation.mutate({
         ...vals,
@@ -107,30 +128,44 @@ export default function CreateImportPage() {
       title: 'Hàng hóa',
       key: 'product',
       width: '35%',
-      render: (_: any, row: ImportItemRow) => (
-        <Select
-          showSearch
-          placeholder="Chọn hàng hóa"
-          style={{ width: '100%' }}
-          value={row.product_id ?? undefined}
-          onChange={(v) => {
-            const p = products.find((pr) => pr.id === v)
-            updateItem(row.key, {
-              product_id: v,
-              unit_price: p?.price ?? 0,
-            })
-          }}
-          filterOption={(input, option) =>
-            String(option?.children ?? '').toLowerCase().includes(input.toLowerCase())
-          }
-        >
-          {products.map((p) => (
-            <Option key={p.id} value={p.id}>
-              [{p.code}] {p.name} ({p.unit})
-            </Option>
-          ))}
-        </Select>
-      ),
+      render: (_: any, row: ImportItemRow) => {
+        const isDuplicated = row.product_id != null && duplicateProductIds.includes(row.product_id)
+        return (
+          <>
+            <Select
+              showSearch
+              placeholder="Chọn hàng hóa"
+              style={{ width: '100%' }}
+              status={isDuplicated ? 'error' : ''}
+              value={row.product_id ?? undefined}
+              onChange={(v) => {
+                const p = products.find((pr) => pr.id === v)
+                updateItem(row.key, {
+                  product_id: v,
+                  unit_price: p?.price ?? 0,
+                })
+              }}
+              filterOption={(input, option) =>
+                String(option?.children ?? '').toLowerCase().includes(input.toLowerCase())
+              }
+            >
+              {products.map((p) => {
+                const isSelectedOther = isSelectedInOtherRow(p.id, row.key)
+                return (
+                  <Option key={p.id} value={p.id} disabled={isSelectedOther}>
+                    [{p.code}] {p.name} ({p.unit}) {isSelectedOther ? '(Đã chọn ở dòng khác)' : ''}
+                  </Option>
+                )
+              })}
+            </Select>
+            {isDuplicated && (
+              <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 4 }}>
+                ⚠️ Mặt hàng này đã được chọn ở dòng khác!
+              </div>
+            )}
+          </>
+        )
+      },
     },
     {
       title: 'Số lượng',
@@ -230,6 +265,15 @@ export default function CreateImportPage() {
 
         <Divider>Danh sách hàng hóa</Divider>
 
+        {hasDuplicates && (
+          <Alert
+            message="Phát hiện mặt hàng trùng lặp: Mỗi mặt hàng chỉ được xuất hiện ở một dòng trong phiếu nhập. Vui lòng gộp số lượng hoặc xóa dòng trùng!"
+            type="error"
+            showIcon
+            style={{ marginBottom: 12 }}
+          />
+        )}
+
         <Table
           dataSource={items}
           columns={itemColumns}
@@ -255,6 +299,7 @@ export default function CreateImportPage() {
               type="primary"
               onClick={handleSubmit}
               loading={mutation.isPending}
+              disabled={hasDuplicates}
               size="large"
             >
               Tạo phiếu nhập
