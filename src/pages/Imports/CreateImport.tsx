@@ -16,7 +16,7 @@ import dayjs from 'dayjs'
 const { Title } = Typography
 const { Option } = Select
 
-const fmtVND = (val: number) => val?.toLocaleString('vi-VN') + ' ₫'
+const fmtVND = (val: number) => (val ?? 0).toLocaleString('vi-VN') + ' ₫'
 
 interface ImportItemRow {
   key: string
@@ -46,45 +46,60 @@ export default function CreateImportPage() {
   const proposals: Proposal[] = propData?.data ?? []
 
   const addItem = () => {
-    setItems([...items, { key: Date.now().toString(), product_id: null, quantity: 1, unit_price: 0, expiry_date: null }])
+    setItems((prev) => [
+      ...prev,
+      { key: Date.now().toString(), product_id: null, quantity: 1, unit_price: 0, expiry_date: null },
+    ])
   }
 
   const removeItem = (key: string) => {
-    setItems(items.filter((i) => i.key !== key))
+    setItems((prev) => prev.filter((i) => i.key !== key))
   }
 
-  const updateItem = (key: string, field: keyof ImportItemRow, value: any) => {
-    setItems(items.map((i) => (i.key === key ? { ...i, [field]: value } : i)))
+  const updateItem = (key: string, updates: Partial<ImportItemRow>) => {
+    setItems((prev) =>
+      prev.map((i) => (i.key === key ? { ...i, ...updates } : i))
+    )
   }
 
-  const totalAmount = items.reduce((s, i) => s + (i.quantity || 0) * (i.unit_price || 0), 0)
+  const totalAmount = items.reduce((s, i) => s + (Number(i.quantity) || 0) * (Number(i.unit_price) || 0), 0)
 
   const mutation = useMutation({
     mutationFn: createImport,
     onSuccess: () => {
       message.success('Tạo phiếu nhập thành công!')
       qc.invalidateQueries({ queryKey: ['imports'] })
+      qc.invalidateQueries({ queryKey: ['inventory'] })
+      qc.invalidateQueries({ queryKey: ['dashboard'] })
       navigate('/imports')
     },
-    onError: () => message.error('Có lỗi xảy ra khi tạo phiếu nhập!'),
+    onError: (err: any) => {
+      const msg = err.response?.data?.detail || 'Có lỗi xảy ra khi tạo phiếu nhập!'
+      message.error(typeof msg === 'string' ? msg : JSON.stringify(msg))
+    },
   })
 
   const handleSubmit = async () => {
-    const vals = await form.validateFields()
-    const validItems = items.filter((i) => i.product_id && i.quantity > 0)
-    if (validItems.length === 0) {
-      message.warning('Vui lòng thêm ít nhất một mặt hàng!')
-      return
+    try {
+      const vals = await form.validateFields()
+      const validItems = items.filter((i) => i.product_id != null && Number(i.quantity) > 0)
+      if (validItems.length === 0) {
+        message.warning('Vui lòng thêm ít nhất một mặt hàng!')
+        return
+      }
+
+      mutation.mutate({
+        ...vals,
+        items: validItems.map((i) => ({
+          product_id: i.product_id,
+          quantity: Number(i.quantity),
+          unit_price: Number(i.unit_price),
+          expiry_date: i.expiry_date ? i.expiry_date.format('YYYY-MM-DD') : null,
+        })),
+      })
+    } catch (e) {
+      // Form validation error
     }
-    mutation.mutate({
-      ...vals,
-      items: validItems.map((i) => ({
-        product_id: i.product_id,
-        quantity: i.quantity,
-        unit_price: i.unit_price,
-        expiry_date: i.expiry_date ? i.expiry_date.format('YYYY-MM-DD') : null,
-      })),
-    })
   }
 
   const itemColumns = [
@@ -99,9 +114,11 @@ export default function CreateImportPage() {
           style={{ width: '100%' }}
           value={row.product_id ?? undefined}
           onChange={(v) => {
-            updateItem(row.key, 'product_id', v)
             const p = products.find((pr) => pr.id === v)
-            if (p) updateItem(row.key, 'unit_price', p.price)
+            updateItem(row.key, {
+              product_id: v,
+              unit_price: p?.price ?? 0,
+            })
           }}
           filterOption={(input, option) =>
             String(option?.children ?? '').toLowerCase().includes(input.toLowerCase())
@@ -123,7 +140,7 @@ export default function CreateImportPage() {
         <InputNumber
           min={1}
           value={row.quantity}
-          onChange={(v) => updateItem(row.key, 'quantity', v ?? 1)}
+          onChange={(v) => updateItem(row.key, { quantity: v ?? 1 })}
           style={{ width: '100%' }}
         />
       ),
@@ -136,7 +153,7 @@ export default function CreateImportPage() {
         <InputNumber
           min={0}
           value={row.unit_price}
-          onChange={(v) => updateItem(row.key, 'unit_price', v ?? 0)}
+          onChange={(v) => updateItem(row.key, { unit_price: v ?? 0 })}
           style={{ width: '100%' }}
           formatter={(v) => `${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
         />
@@ -150,7 +167,7 @@ export default function CreateImportPage() {
         <DatePicker
           format="DD/MM/YYYY"
           value={row.expiry_date}
-          onChange={(v) => updateItem(row.key, 'expiry_date', v)}
+          onChange={(v) => updateItem(row.key, { expiry_date: v })}
           style={{ width: '100%' }}
           placeholder="Không có"
         />
@@ -159,7 +176,7 @@ export default function CreateImportPage() {
     {
       title: 'Thành tiền',
       key: 'subtotal',
-      render: (_: any, row: ImportItemRow) => fmtVND((row.quantity || 0) * (row.unit_price || 0)),
+      render: (_: any, row: ImportItemRow) => fmtVND((Number(row.quantity) || 0) * (Number(row.unit_price) || 0)),
     },
     {
       title: '',

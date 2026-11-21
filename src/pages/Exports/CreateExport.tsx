@@ -33,16 +33,21 @@ export default function CreateExportPage() {
   const products: Product[] = prodData?.data ?? []
 
   const addItem = () => {
-    setItems([...items, { key: Date.now().toString(), product_id: null, quantity: 1, max_qty: 999999 }])
+    setItems((prev) => [
+      ...prev,
+      { key: Date.now().toString(), product_id: null, quantity: 1, max_qty: 999999 },
+    ])
   }
 
   const removeItem = (key: string) => {
-    setItems(items.filter((i) => i.key !== key))
+    setItems((prev) => prev.filter((i) => i.key !== key))
     setQtyErrors((prev) => { const copy = { ...prev }; delete copy[key]; return copy })
   }
 
-  const updateItem = (key: string, field: keyof ExportItemRow, value: any) => {
-    setItems((prev) => prev.map((i) => (i.key === key ? { ...i, [field]: value } : i)))
+  const updateItem = (key: string, updates: Partial<ExportItemRow>) => {
+    setItems((prev) =>
+      prev.map((i) => (i.key === key ? { ...i, ...updates } : i))
+    )
   }
 
   const mutation = useMutation({
@@ -50,28 +55,37 @@ export default function CreateExportPage() {
     onSuccess: () => {
       message.success('Tạo phiếu xuất thành công!')
       qc.invalidateQueries({ queryKey: ['exports'] })
+      qc.invalidateQueries({ queryKey: ['inventory'] })
+      qc.invalidateQueries({ queryKey: ['dashboard'] })
       navigate('/exports')
     },
-    onError: () => message.error('Có lỗi xảy ra khi tạo phiếu xuất!'),
+    onError: (err: any) => {
+      const msg = err.response?.data?.detail || 'Có lỗi xảy ra khi tạo phiếu xuất!'
+      message.error(typeof msg === 'string' ? msg : JSON.stringify(msg))
+    },
   })
 
   const hasQtyError = Object.values(qtyErrors).some(Boolean)
 
   const handleSubmit = async () => {
-    const vals = await form.validateFields()
-    const validItems = items.filter((i) => i.product_id && i.quantity > 0)
-    if (validItems.length === 0) {
-      message.warning('Vui lòng thêm ít nhất một mặt hàng!')
-      return
+    try {
+      const vals = await form.validateFields()
+      const validItems = items.filter((i) => i.product_id != null && Number(i.quantity) > 0)
+      if (validItems.length === 0) {
+        message.warning('Vui lòng thêm ít nhất một mặt hàng!')
+        return
+      }
+      if (hasQtyError) {
+        message.warning('Số lượng xuất vượt quá tồn kho!')
+        return
+      }
+      mutation.mutate({
+        ...vals,
+        items: validItems.map((i) => ({ product_id: i.product_id, quantity: Number(i.quantity) })),
+      })
+    } catch (e) {
+      // Form validation error
     }
-    if (hasQtyError) {
-      message.warning('Số lượng xuất vượt quá tồn kho!')
-      return
-    }
-    mutation.mutate({
-      ...vals,
-      items: validItems.map((i) => ({ product_id: i.product_id, quantity: i.quantity })),
-    })
   }
 
   const itemColumns = [
@@ -87,9 +101,12 @@ export default function CreateExportPage() {
           value={row.product_id ?? undefined}
           onChange={(v) => {
             const p = products.find((pr) => pr.id === v)
-            updateItem(row.key, 'product_id', v)
-            updateItem(row.key, 'max_qty', p?.current_stock ?? 999999)
-            setQtyErrors((prev) => ({ ...prev, [row.key]: row.quantity > (p?.current_stock ?? 999999) }))
+            const maxQ = p?.current_stock ?? 999999
+            updateItem(row.key, {
+              product_id: v,
+              max_qty: maxQ,
+            })
+            setQtyErrors((prev) => ({ ...prev, [row.key]: row.quantity > maxQ }))
           }}
           filterOption={(input, option) =>
             String(option?.children ?? '').toLowerCase().includes(input.toLowerCase())
@@ -115,8 +132,8 @@ export default function CreateExportPage() {
             value={row.quantity}
             status={qtyErrors[row.key] ? 'error' : ''}
             onChange={(v) => {
-              const qty = v ?? 1
-              updateItem(row.key, 'quantity', qty)
+              const qty = Number(v) || 1
+              updateItem(row.key, { quantity: qty })
               setQtyErrors((prev) => ({ ...prev, [row.key]: qty > row.max_qty }))
             }}
             style={{ width: '100%' }}
