@@ -208,14 +208,14 @@ export default function ProposalDetailPage() {
                   onClick={() => setApproveModal(true)}
                   style={{ background: '#52c41a', borderColor: '#52c41a' }}
                 >
-                  ✅ Phê duyệt
+                  Phê duyệt
                 </Button>
                 <Button
                   danger
                   icon={<CloseOutlined />}
                   onClick={() => setRejectModal(true)}
                 >
-                  ❌ Từ chối
+                  Từ chối
                 </Button>
               </>
             )}
@@ -226,7 +226,7 @@ export default function ProposalDetailPage() {
                 onClick={() => startMut.mutate()}
                 loading={startMut.isPending}
               >
-                ▶ Bắt đầu thực hiện
+                Bắt đầu thực hiện
               </Button>
             )}
             {proposal.status === 'APPROVED' && isManager && (
@@ -235,7 +235,7 @@ export default function ProposalDetailPage() {
                 icon={<StopOutlined />}
                 onClick={() => setCancelModal(true)}
               >
-                🚫 Hủy
+                Hủy đề xuất
               </Button>
             )}
             {proposal.status === 'IN_PROGRESS' && !isManager && (
@@ -246,7 +246,7 @@ export default function ProposalDetailPage() {
                 loading={completeMut.isPending}
                 style={{ background: '#52c41a', borderColor: '#52c41a' }}
               >
-                ✅ Hoàn thành nhập hàng
+                Hoàn thành nhập hàng
               </Button>
             )}
           </Space>
